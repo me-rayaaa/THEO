@@ -9,12 +9,12 @@ def build_battle_commentary(target_lap):
     tyre_data = build_tyre_intelligence(target_lap)
 
     catch_by_pair = {
-        (item["driver"], item["target"]): item
+        (item["driver_number"], item["target_number"]): item
         for item in catch_data["predictions"]
     }
 
     tyre_by_pair = {
-        (item["driver"], item["target"]): item
+        (item["driver_number"], item["target_number"]): item
         for item in tyre_data["battles"]
     }
 
@@ -26,6 +26,7 @@ def build_battle_commentary(target_lap):
 
         driver = battle["driver"]
         target = battle["target"]
+        pair = (battle["driver_number"], battle["target_number"])
 
         if battle["gap_trend"] == "CLOSING":
             text = (
@@ -35,9 +36,7 @@ def build_battle_commentary(target_lap):
                 f'{battle["closing_rate"]} seconds per lap.'
             )
 
-            catch = catch_by_pair.get(
-                (driver, target)
-            )
+            catch = catch_by_pair.get(pair)
 
             if (
                 catch
@@ -50,18 +49,11 @@ def build_battle_commentary(target_lap):
                     f'{round(catch["laps_to_catch"])} laps.'
                 )
 
-            tyre = tyre_by_pair.get(
-                (driver, target)
-            )
+            tyre = tyre_by_pair.get(pair)
 
             if tyre:
-                driver_level = tyre[
-                    "driver_degradation_level"
-                ]
-
-                target_level = tyre[
-                    "target_degradation_level"
-                ]
+                driver_level = tyre["driver_degradation_level"]
+                target_level = tyre["target_degradation_level"]
 
                 if (
                     target_level == "HIGH"
@@ -109,11 +101,5 @@ def build_battle_commentary(target_lap):
 
 
 if __name__ == "__main__":
-    commentary = build_battle_commentary(60)
-
-    for item in commentary["messages"]:
-        print(
-            item["priority"],
-            "-",
-            item["message"]
-        )
+    for item in build_battle_commentary(60)["messages"]:
+        print(item["priority"], "-", item["message"])

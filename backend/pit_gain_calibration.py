@@ -1,16 +1,12 @@
-import json
+from functools import lru_cache
 from statistics import median
 
-from pace_analysis import get_clean_laps
-
-pit_file = "../data/mexico_2025/pit.json"
-
-with open(pit_file, "r", encoding="utf-8") as file:
-    pits = json.load(file)
+from clean_laps import get_clean_laps
+from data_store import get_race_phase, pits
 
 
 def calculate_observed_pit_gain(
-    target_lap=71,
+    target_lap,
     laps_before=3,
     laps_after=3
 ):
@@ -23,6 +19,10 @@ def calculate_observed_pit_gain(
         pit_lap = pit["lap_number"]
 
         if pit_lap is None:
+            continue
+
+        # Только стопы, чьё окно «после» уже полностью в прошлом.
+        if pit_lap + laps_after + 1 > target_lap:
             continue
 
         before_laps = [
@@ -42,42 +42,24 @@ def calculate_observed_pit_gain(
         if len(before_laps) < 2 or len(after_laps) < 2:
             continue
 
-        before_pace = median(
-            lap["lap_duration"]
-            for lap in before_laps
-        )
-
-        after_pace = median(
-            lap["lap_duration"]
-            for lap in after_laps
-        )
-
-        observed_gain = round(
-            before_pace - after_pace,
-            3
-        )
-
-        if pit_lap <= 25:
-            phase = "EARLY"
-        elif pit_lap <= 45:
-            phase = "MIDDLE"
-        else:
-            phase = "LATE"
+        before_pace = median(lap["lap_duration"] for lap in before_laps)
+        after_pace = median(lap["lap_duration"] for lap in after_laps)
 
         results.append({
             "driver_number": driver_number,
             "pit_lap": pit_lap,
-            "phase": phase,
+            "phase": get_race_phase(pit_lap),
             "before_pace": round(before_pace, 3),
             "after_pace": round(after_pace, 3),
-            "observed_gain": observed_gain
+            "observed_gain": round(before_pace - after_pace, 3)
         })
 
     return results
 
 
-def calculate_phase_gains():
-    results = calculate_observed_pit_gain()
+@lru_cache(maxsize=None)
+def calculate_phase_gains(target_lap):
+    results = calculate_observed_pit_gain(target_lap)
 
     phases = {
         "EARLY": [],
@@ -85,54 +67,29 @@ def calculate_phase_gains():
         "LATE": []
     }
 
+    # Отрицательные выигрыши не выбрасываем: иначе медиана завышена.
     for item in results:
-        if item["observed_gain"] <= 0:
-            continue
+        phases[item["phase"]].append(item["observed_gain"])
 
-        phases[item["phase"]].append(
-            item["observed_gain"]
-        )
-
-    phase_gains = {}
+    phase_gains = {
+        "ALL": {
+            "median_gain": (
+                round(median(r["observed_gain"] for r in results), 3)
+                if results else None
+            ),
+            "samples": len(results)
+        }
+    }
 
     for phase, gains in phases.items():
-        if gains:
-            phase_gains[phase] = {
-                "median_gain": round(
-                    median(gains),
-                    3
-                ),
-                "samples": len(gains)
-            }
-        else:
-            phase_gains[phase] = {
-                "median_gain": None,
-                "samples": 0
-            }
+        phase_gains[phase] = {
+            "median_gain": round(median(gains), 3) if gains else None,
+            "samples": len(gains)
+        }
 
     return phase_gains
 
 
 if __name__ == "__main__":
-    results = calculate_observed_pit_gain()
-
-    for item in results:
-        print(
-            f'driver {item["driver_number"]} | '
-            f'pit lap {item["pit_lap"]} | '
-            f'{item["phase"]} | '
-            f'gain {item["observed_gain"]}'
-        )
-
-    print("\nPHASE GAINS")
-
-    phase_gains = calculate_phase_gains()
-
-    for phase, data in phase_gains.items():
-        print(
-            phase,
-            "| median gain:",
-            data["median_gain"],
-            "| samples:",
-            data["samples"]
-        )
+    for phase, data in calculate_phase_gains(71).items():
+        print(phase, "| median gain:", data["median_gain"], "| samples:", data["samples"])

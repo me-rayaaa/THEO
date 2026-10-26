@@ -1,10 +1,11 @@
 import threading
 import time
 
+from data_store import LAST_LAP
 from race_state import get_race_state
 
 START_LAP = 2
-END_LAP = 71
+END_LAP = LAST_LAP
 SECONDS_PER_LAP = 1
 
 current_lap = START_LAP
@@ -19,23 +20,14 @@ def print_race_state(lap_number):
     print("LAP", race_state["current_lap"])
     print("STATUS:", race_state["race_status"])
 
-    print("\nTOP 10")
-
-    for driver in race_state["drivers"]:
+    for driver in race_state["drivers"][:10]:
         print(
             "P" + str(driver["position"]),
-            "-",
-            driver["name"],
-            "- gap:",
-            driver["gap"],
-            "- tyre:",
-            driver["compound"],
-            "- age:",
-            driver["tyre_age"],
-            "- pits:",
-            driver["pit_stops"],
-            "- last clean lap:",
-            driver["last_clean_lap"]
+            "-", driver["name"],
+            "- gap:", driver["gap"],
+            "- tyre:", driver["compound"],
+            "- age:", driver["tyre_age"],
+            "- pits:", driver["pit_stops"],
         )
 
 
@@ -60,33 +52,50 @@ def replay():
             time.sleep(0.1)
 
 
-thread = threading.Thread(target=replay)
-thread.start()
+def start_thread():
+    thread = threading.Thread(target=replay, daemon=True)
+    thread.start()
+    return thread
 
-print("Commands: start, pause, restart, quit")
 
-while True:
-    command = input("> ").strip().lower()
+def main():
+    global current_lap, running, finished
 
-    if command == "start":
-        running = True
+    thread = start_thread()
 
-    elif command == "pause":
-        running = False
-        print("Replay paused.")
+    print("Commands: start, pause, restart, quit")
 
-    elif command == "restart":
-        running = False
-        current_lap = START_LAP
-        finished = False
-        print("Replay restarted from lap", START_LAP)
+    while True:
+        command = input("> ").strip().lower()
 
-    elif command == "quit":
-        running = False
-        finished = True
-        break
+        if command == "start":
+            running = True
 
-    else:
-        print("Unknown command.")
+        elif command == "pause":
+            running = False
+            print("Replay paused.")
 
-thread.join()
+        elif command == "restart":
+            running = False
+            current_lap = START_LAP
+            finished = False
+
+            # После финиша поток уже завершился — запускаем новый.
+            if not thread.is_alive():
+                thread = start_thread()
+
+            print("Replay restarted from lap", START_LAP)
+
+        elif command == "quit":
+            running = False
+            finished = True
+            break
+
+        else:
+            print("Unknown command.")
+
+    thread.join()
+
+
+if __name__ == "__main__":
+    main()

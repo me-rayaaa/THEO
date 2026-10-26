@@ -63,12 +63,12 @@ type TheoCommentary = {
 
 type StrategyData = {
   lap: number;
-  driver: string;
+  driver: string | null;
   recommendation: string;
   best_lap: number | null;
   optimal_window: number[];
-  traffic_level: string;
-  projected_rejoin_position: number;
+  traffic_level: string | null;
+  projected_rejoin_position: number | null;
   message: string;
 };
 
@@ -78,8 +78,8 @@ type RivalDecisionData = {
   target: string;
   undercut_status: string;
   overcut_status: string;
-  undercut_quality: number;
-  overcut_quality: number;
+  undercut_quality: number | null;
+  overcut_quality: number | null;
   quality_difference: number;
   decision: string;
   message: string;
@@ -94,12 +94,32 @@ type TeamEngineerData = {
   degradation_level: string;
   rival_decision: string | null;
   battle_priority: string | null;
-  strong_trigger: boolean;
+  race_status: string;
+  neutralized: boolean;
+  pit_now_trigger: boolean;
+  pit_window_trigger: boolean;
   message: string;
 };
 
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+
 const START_LAP = 2;
-const END_LAP = 71;
+const END_LAP = 71; // должен совпадать с LAST_LAP в backend/data_store.py
+
+// null — если backend ответил ошибкой; AbortError пробрасывается дальше.
+async function fetchJson<T>(
+  path: string,
+  signal: AbortSignal
+): Promise<T | null> {
+  const response = await fetch(`${API_URL}${path}`, { signal });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  return response.json();
+}
 
 export default function RaceDashboard() {
   const [lap, setLap] = useState(25);
@@ -120,41 +140,44 @@ export default function RaceDashboard() {
     useState<RivalDecisionData | null>(null);
 
   const [playing, setPlaying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Отменяем запросы прошлого круга, чтобы они не перезаписали новый.
+    const controller = new AbortController();
+
     async function loadRace() {
-      const raceResponse = await fetch(
-        `http://127.0.0.1:8000/api/race/${lap}`
-      );
+      try {
+        const [raceData, eventsData, theoData] = await Promise.all([
+          fetchJson<RaceState>(`/api/race/${lap}`, controller.signal),
+          fetchJson<EventSummary>(`/api/race/${lap}/events`, controller.signal),
+          fetchJson<TheoCommentary>(`/api/race/${lap}/theo`, controller.signal),
+        ]);
 
-      const eventsResponse = await fetch(
-        `http://127.0.0.1:8000/api/race/${lap}/events`
-      );
+        if (!raceData || !eventsData || !theoData) {
+          setError(`No data for lap ${lap}`);
+          return;
+        }
 
-      const theoResponse = await fetch(
-        `http://127.0.0.1:8000/api/race/${lap}/theo`
-      );
+        setError(null);
+        setRace(raceData);
+        setEvents(eventsData);
+        setTheo(theoData);
 
-      const raceData = await raceResponse.json();
-      const eventsData = await eventsResponse.json();
-      const theoData = await theoResponse.json();
-
-      setRace(raceData);
-      setEvents(eventsData);
-      setTheo(theoData);
-
-      if (
-        selectedDriver === null &&
-        raceData.drivers.length > 0
-      ) {
         setSelectedDriver(
-          raceData.drivers[0].driver_number
+          (current) => current ?? raceData.drivers[0]?.driver_number ?? null
         );
+      } catch {
+        if (!controller.signal.aborted) {
+          setError("Backend is unavailable");
+        }
       }
     }
 
     loadRace();
-  }, [lap, selectedDriver]);
+
+    return () => controller.abort();
+  }, [lap]);
 
   useEffect(() => {
     if (selectedDriver === null) {
@@ -162,27 +185,28 @@ export default function RaceDashboard() {
       return;
     }
 
+    const controller = new AbortController();
+
     async function loadTeamEngineer() {
-      const response = await fetch(
-        `http://127.0.0.1:8000/api/race/${lap}/team-engineer/${selectedDriver}`
-      );
+      try {
+        const data = await fetchJson<TeamEngineerData>(
+          `/api/race/${lap}/team-engineer/${selectedDriver}`,
+          controller.signal
+        );
 
-      if (!response.ok) {
-        setTeamEngineer(null);
-        return;
+        setTeamEngineer(
+          data && data.decision !== "NO_DATA" ? data : null
+        );
+      } catch {
+        if (!controller.signal.aborted) {
+          setTeamEngineer(null);
+        }
       }
-
-      const data = await response.json();
-
-      if (data.decision === "NO_DATA") {
-        setTeamEngineer(null);
-        return;
-      }
-
-      setTeamEngineer(data);
     }
 
     loadTeamEngineer();
+
+    return () => controller.abort();
   }, [lap, selectedDriver]);
 
   useEffect(() => {
@@ -191,22 +215,29 @@ export default function RaceDashboard() {
       return;
     }
 
+    const controller = new AbortController();
+
     async function loadStrategy() {
-      const response = await fetch(
-        `http://127.0.0.1:8000/api/race/${lap}/strategy/${selectedDriver}`
-      );
+      try {
+        const data = await fetchJson<StrategyData>(
+          `/api/race/${lap}/strategy/${selectedDriver}`,
+          controller.signal
+        );
 
-      if (!response.ok) {
-        setStrategy(null);
-        return;
+        // NO_DATA раньше доходил до рендера и ронял страницу.
+        setStrategy(
+          data && data.recommendation !== "NO_DATA" ? data : null
+        );
+      } catch {
+        if (!controller.signal.aborted) {
+          setStrategy(null);
+        }
       }
-
-      const data = await response.json();
-
-      setStrategy(data);
     }
 
     loadStrategy();
+
+    return () => controller.abort();
   }, [lap, selectedDriver]);
 
   useEffect(() => {
@@ -215,6 +246,11 @@ export default function RaceDashboard() {
       race === null
     ) {
       setRivalStrategy(null);
+      return;
+    }
+
+    // Ждём данные нового круга, иначе соперник берётся из прошлого.
+    if (race.current_lap !== lap) {
       return;
     }
 
@@ -241,47 +277,48 @@ export default function RaceDashboard() {
       return;
     }
 
+    const controller = new AbortController();
+    const targetNumber = target.driver_number;
+
     async function loadRivalStrategy() {
-      const response = await fetch(
-        `http://127.0.0.1:8000/api/race/${lap}/rival-decision/${selectedDriver}/${target!.driver_number}`
-      );
+      try {
+        const data = await fetchJson<RivalDecisionData>(
+          `/api/race/${lap}/rival-decision/${selectedDriver}/${targetNumber}`,
+          controller.signal
+        );
 
-      if (!response.ok) {
-        setRivalStrategy(null);
-        return;
+        setRivalStrategy(
+          data && data.decision !== "NO_DATA" ? data : null
+        );
+      } catch {
+        if (!controller.signal.aborted) {
+          setRivalStrategy(null);
+        }
       }
-
-      const data = await response.json();
-
-      if (data.decision === "NO_DATA") {
-        setRivalStrategy(null);
-        return;
-      }
-
-      setRivalStrategy(data);
     }
 
     loadRivalStrategy();
+
+    return () => controller.abort();
   }, [lap, selectedDriver, race]);
 
+  // На последнем круге воспроизведение останавливается само,
+  // без вызова setPlaying внутри setLap.
+  const isPlaying = playing && lap < END_LAP;
+
   useEffect(() => {
-    if (!playing) {
+    if (!isPlaying) {
       return;
     }
 
     const timer = setInterval(() => {
-      setLap((currentLap) => {
-        if (currentLap >= END_LAP) {
-          setPlaying(false);
-          return currentLap;
-        }
-
-        return currentLap + 1;
-      });
+      setLap((currentLap) =>
+        Math.min(END_LAP, currentLap + 1)
+      );
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [playing]);
+  }, [isPlaying]);
 
   if (
     !race ||
@@ -290,7 +327,7 @@ export default function RaceDashboard() {
   ) {
     return (
       <main className="min-h-screen bg-black text-white p-10">
-        Loading...
+        {error ?? "Loading..."}
       </main>
     );
   }
@@ -309,6 +346,11 @@ export default function RaceDashboard() {
           </p>
         </div>
 
+        {error && (
+          <div className="mb-6 text-red-400">
+            {error}
+          </div>
+        )}
         <div className="flex gap-4 mb-8">
           <button
             onClick={() =>
@@ -326,11 +368,11 @@ export default function RaceDashboard() {
 
           <button
             onClick={() =>
-              setPlaying(!playing)
+              setPlaying(!isPlaying)
             }
             className="border border-zinc-700 px-4 py-2 rounded"
           >
-            {playing ? "Pause" : "Play"}
+            {isPlaying ? "Pause" : "Play"}
           </button>
 
           <button
@@ -640,10 +682,9 @@ export default function RaceDashboard() {
                       </div>
 
                       <div className="text-lg">
-                        P
-                        {
-                          strategy.projected_rejoin_position
-                        }
+                                                {strategy.projected_rejoin_position
+                          ? `P${strategy.projected_rejoin_position}`
+                          : "-"}
                       </div>
 
                     </div>
@@ -679,7 +720,7 @@ export default function RaceDashboard() {
                       </div>
 
                       <div className="text-lg">
-                        {strategy.traffic_level}
+                        {strategy.traffic_level ?? "-"}
                       </div>
 
                     </div>

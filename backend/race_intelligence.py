@@ -13,29 +13,26 @@ def build_race_intelligence(target_lap):
         for item in pace_trends
     }
 
-    drivers_by_name = {
-        driver["name"]: driver
+    drivers_by_number = {
+        driver["driver_number"]: driver
         for driver in race_state["drivers"]
     }
 
     battles = []
 
     for gap in gap_trends:
-        driver = drivers_by_name.get(gap["driver"])
-        target = drivers_by_name.get(gap["target"])
+        driver = drivers_by_number.get(gap["driver_number"])
+        target = drivers_by_number.get(gap["target_number"])
 
         if driver is None or target is None:
             continue
 
-        driver_pace = pace_by_driver.get(
-            driver["driver_number"]
-        )
-
-        target_pace = pace_by_driver.get(
-            target["driver_number"]
-        )
+        driver_pace = pace_by_driver.get(driver["driver_number"])
+        target_pace = pace_by_driver.get(target["driver_number"])
 
         battles.append({
+            "driver_number": driver["driver_number"],
+            "target_number": target["driver_number"],
             "driver": driver["name"],
             "position": driver["position"],
             "target": target["name"],
@@ -45,14 +42,10 @@ def build_race_intelligence(target_lap):
             "closing_rate": gap["closing_rate"],
             "gap_trend": gap["trend"],
             "driver_pace_trend": (
-                driver_pace["trend"]
-                if driver_pace
-                else "UNKNOWN"
+                driver_pace["trend"] if driver_pace else "UNKNOWN"
             ),
             "target_pace_trend": (
-                target_pace["trend"]
-                if target_pace
-                else "UNKNOWN"
+                target_pace["trend"] if target_pace else "UNKNOWN"
             ),
             "driver_tyre": driver["compound"],
             "driver_tyre_age": driver["tyre_age"],
@@ -67,19 +60,9 @@ def build_race_intelligence(target_lap):
 
 
 if __name__ == "__main__":
-    intelligence = build_race_intelligence(25)
-
-    for battle in intelligence["battles"]:
+    for battle in build_race_intelligence(25)["battles"]:
         print(
             f'P{battle["position"]} {battle["driver"]} -> '
             f'P{battle["target_position"]} {battle["target"]} | '
-            f'gap: {battle["current_gap"]} | '
-            f'rate: {battle["closing_rate"]} | '
-            f'{battle["gap_trend"]} | '
-            f'{battle["driver_pace_trend"]} vs '
-            f'{battle["target_pace_trend"]} | '
-            f'{battle["driver_tyre"]} '
-            f'{battle["driver_tyre_age"]} laps vs '
-            f'{battle["target_tyre"]} '
-            f'{battle["target_tyre_age"]} laps'
+            f'gap: {battle["current_gap"]} | {battle["gap_trend"]}'
         )

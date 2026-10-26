@@ -3,15 +3,18 @@ import requests
 session_key = 9877
 
 drivers = requests.get(
-    f"https://api.openf1.org/v1/drivers?session_key={session_key}"
+    f"https://api.openf1.org/v1/drivers?session_key={session_key}",
+    timeout=30
 ).json()
 
 positions = requests.get(
-    f"https://api.openf1.org/v1/position?session_key={session_key}"
+    f"https://api.openf1.org/v1/position?session_key={session_key}",
+    timeout=30
 ).json()
 
 stints = requests.get(
-    f"https://api.openf1.org/v1/stints?session_key={session_key}"
+    f"https://api.openf1.org/v1/stints?session_key={session_key}",
+    timeout=30
 ).json()
 
 drivers_by_number = {

@@ -1,176 +1,145 @@
-import json
 from statistics import median
 
-from race_state import get_race_state
+from data_store import (
+    DEFAULT_PIT_LOSS,
+    LAST_LAP,
+    MIN_PIT_SAMPLES,
+    NEUTRALIZED_PIT_LOSS_FACTOR,
+    PIT_LANE_TIME_ON_TRACK,
+    get_numeric_gap,
+    get_race_phase,
+    pits,
+)
 from pit_gain_calibration import calculate_phase_gains
+from race_state import get_race_state
 from tyre_degradation import calculate_tyre_degradation
 
 
-pit_file = "../data/mexico_2025/pit.json"
-
-with open(
-    pit_file,
-    "r",
-    encoding="utf-8"
-) as file:
-    pits = json.load(file)
+# Пороги возраста шин (кругов) для +1/+2/+3 к оценке. Ориентировочно, подобрать по данным.
+TYRE_AGE_THRESHOLDS = {
+    "SOFT": (7, 14, 20),
+    "MEDIUM": (10, 20, 30),
+    "HARD": (15, 28, 40),
+}
 
 
-def calculate_pit_loss():
+def calculate_pit_loss(target_lap, race_status=None):
+    # Только стопы, которые уже случились к этому кругу.
     durations = []
 
     for pit in pits:
+        if pit["lap_number"] is None or pit["lap_number"] > target_lap:
+            continue
+
         duration = pit.get("lane_duration")
 
         if duration is None:
             duration = pit.get("pit_duration")
 
-        if duration is None:
-            continue
-
-        if duration <= 0:
+        if duration is None or duration <= 0:
             continue
 
         durations.append(duration)
 
-    if not durations:
-        return None
+    if len(durations) >= MIN_PIT_SAMPLES:
+        lane_time = median(durations)
+    else:
+        lane_time = DEFAULT_PIT_LOSS
 
-    return round(
-        median(durations),
-        3
-    )
+    # Потеря = время в пит-лейне минус проезд того же участка по трассе.
+    loss = lane_time - PIT_LANE_TIME_ON_TRACK
 
+    # Под VSC/SC соперники едут медленно, стоп обходится дешевле.
+    loss *= NEUTRALIZED_PIT_LOSS_FACTOR.get(race_status, 1.0)
 
-def get_race_phase(lap_number):
-    if lap_number <= 25:
-        return "EARLY"
-
-    if lap_number <= 45:
-        return "MIDDLE"
-
-    return "LATE"
+    return round(loss, 3)
 
 
-def get_phase_gain(lap_number):
-    phase = get_race_phase(
-        lap_number
-    )
+def get_phase_gain(phase_lap, known_until_lap=None):
+    if known_until_lap is None:
+        known_until_lap = phase_lap
 
-    phase_gains = calculate_phase_gains()
+    # Калибровка только по стопам до текущего круга.
+    phase_gains = calculate_phase_gains(known_until_lap)
 
-    data = phase_gains.get(
-        phase
-    )
+    data = phase_gains.get(get_race_phase(phase_lap))
 
-    if data is None:
-        return None
+    if data is None or data["median_gain"] is None:
+        data = phase_gains["ALL"]
 
     return data["median_gain"]
 
 
-def get_numeric_gap(gap):
-    if gap is None:
-        return None
-
-    if isinstance(
-        gap,
-        (int, float)
-    ):
-        return float(gap)
-
-    if isinstance(gap, str):
-
-        if "LAP" in gap.upper():
-            return None
-
-        try:
-            return float(gap)
-
-        except ValueError:
-            return None
-
-    return None
-
-
-def calculate_rejoin(
-    target_lap,
-    driver_number
-):
-    race_state = get_race_state(
-        target_lap
-    )
-
-    pit_loss = calculate_pit_loss()
-
-    driver = next(
+def find_driver(race_state, driver_number):
+    return next(
         (
             item
             for item in race_state["drivers"]
-            if item["driver_number"]
-            == driver_number
+            if item["driver_number"] == driver_number
         ),
         None
     )
 
-    if (
-        driver is None
-        or pit_loss is None
-    ):
+
+def calculate_rejoin(
+    target_lap,
+    driver_number,
+    race_state=None
+):
+    if race_state is None:
+        race_state = get_race_state(target_lap)
+
+    driver = find_driver(race_state, driver_number)
+
+    if driver is None:
         return None
 
-    driver_gap = driver["gap"]
+    driver_gap = get_numeric_gap(driver["gap"])
 
-    if not isinstance(
-        driver_gap,
-        (int, float)
-    ):
+    if driver_gap is None:
         return None
 
-    projected_gap = (
-        driver_gap
-        + pit_loss
+    pit_loss = calculate_pit_loss(
+        target_lap,
+        race_state["race_status"]
     )
 
+    projected_gap = driver_gap + pit_loss
+
     projected_position = 1
+    net_position = 1
 
+    # Весь пелотон, а не только топ-10.
     for other in race_state["drivers"]:
-
-        if (
-            other["driver_number"]
-            == driver_number
-        ):
+        if other["driver_number"] == driver_number:
             continue
 
-        other_gap = other["gap"]
+        other_gap = get_numeric_gap(other["gap"])
 
-        if not isinstance(
-            other_gap,
-            (int, float)
-        ):
+        if other_gap is None:
             continue
 
         if other_gap < projected_gap:
             projected_position += 1
 
+        # Обязательный стоп: кто ещё не заезжал, потеряет pit_loss позже.
+        owes_stop = other["pit_stops"] == 0
+        other_net_gap = other_gap + (pit_loss if owes_stop else 0.0)
+
+        if other_net_gap < projected_gap:
+            net_position += 1
+
     return {
         "lap": target_lap,
         "driver": driver["name"],
-        "current_position":
-            driver["position"],
-        "current_gap":
-            driver_gap,
-        "tyre_age":
-            driver["tyre_age"],
-        "pit_loss":
-            pit_loss,
-        "projected_gap":
-            round(
-                projected_gap,
-                3
-            ),
-        "projected_rejoin_position":
-            projected_position
+        "current_position": driver["position"],
+        "current_gap": driver_gap,
+        "compound": driver["compound"],
+        "tyre_age": driver["tyre_age"],
+        "pit_loss": pit_loss,
+        "projected_gap": round(projected_gap, 3),
+        "projected_rejoin_position": projected_position,
+        "projected_net_position": net_position
     }
 
 
@@ -178,25 +147,19 @@ def analyze_rejoin_traffic(
     target_lap,
     driver_number,
     projected_gap,
-    traffic_threshold=2.0
+    traffic_threshold=2.0,
+    race_state=None
 ):
-    race_state = get_race_state(
-        target_lap
-    )
+    if race_state is None:
+        race_state = get_race_state(target_lap)
 
     other_drivers = []
 
     for driver in race_state["drivers"]:
-
-        if (
-            driver["driver_number"]
-            == driver_number
-        ):
+        if driver["driver_number"] == driver_number:
             continue
 
-        gap = get_numeric_gap(
-            driver["gap"]
-        )
+        gap = get_numeric_gap(driver["gap"])
 
         if gap is None:
             continue
@@ -206,113 +169,44 @@ def analyze_rejoin_traffic(
             "gap": gap
         })
 
-    drivers_ahead = [
-        driver
-        for driver in other_drivers
-        if driver["gap"]
-        < projected_gap
-    ]
+    drivers_ahead = [d for d in other_drivers if d["gap"] < projected_gap]
+    drivers_behind = [d for d in other_drivers if d["gap"] > projected_gap]
 
-    drivers_behind = [
-        driver
-        for driver in other_drivers
-        if driver["gap"]
-        > projected_gap
-    ]
+    car_ahead = max(drivers_ahead, key=lambda d: d["gap"]) if drivers_ahead else None
+    car_behind = min(drivers_behind, key=lambda d: d["gap"]) if drivers_behind else None
 
-    car_ahead = None
-    car_behind = None
-
-    if drivers_ahead:
-        car_ahead = max(
-            drivers_ahead,
-            key=lambda driver:
-                driver["gap"]
-        )
-
-    if drivers_behind:
-        car_behind = min(
-            drivers_behind,
-            key=lambda driver:
-                driver["gap"]
-        )
-
-    gap_ahead = None
-    gap_behind = None
-
-    if car_ahead:
-        gap_ahead = round(
-            projected_gap
-            - car_ahead["gap"],
-            3
-        )
-
-    if car_behind:
-        gap_behind = round(
-            car_behind["gap"]
-            - projected_gap,
-            3
-        )
+    gap_ahead = round(projected_gap - car_ahead["gap"], 3) if car_ahead else None
+    gap_behind = round(car_behind["gap"] - projected_gap, 3) if car_behind else None
 
     traffic_score = 0
 
-    if (
-        gap_ahead is not None
-        and gap_ahead
-        < traffic_threshold
-    ):
+    if gap_ahead is not None and gap_ahead < traffic_threshold:
         traffic_score += 1
 
-    if (
-        gap_behind is not None
-        and gap_behind
-        < traffic_threshold
-    ):
+    if gap_behind is not None and gap_behind < traffic_threshold:
         traffic_score += 1
 
     if traffic_score == 0:
         traffic_level = "CLEAR"
-
     elif traffic_score == 1:
         traffic_level = "MODERATE"
-
     else:
         traffic_level = "HEAVY"
 
     return {
-        "traffic_level":
-            traffic_level,
-        "car_ahead":
-            car_ahead["name"]
-            if car_ahead
-            else None,
-        "gap_ahead":
-            gap_ahead,
-        "car_behind":
-            car_behind["name"]
-            if car_behind
-            else None,
-        "gap_behind":
-            gap_behind
+        "traffic_level": traffic_level,
+        "car_ahead": car_ahead["name"] if car_ahead else None,
+        "gap_ahead": gap_ahead,
+        "car_behind": car_behind["name"] if car_behind else None,
+        "gap_behind": gap_behind
     }
 
 
-def get_degradation_for_driver(
-    target_lap,
-    driver_name
-):
-    degradation = (
-        calculate_tyre_degradation(
-            target_lap
-        )
-    )
+def get_degradation_for_driver(target_lap, driver_number):
+    degradation = calculate_tyre_degradation(target_lap)
 
     for driver in degradation["drivers"]:
-
-        if (
-            driver["driver"]
-            == driver_name
-        ):
+        if driver["driver_number"] == driver_number:
             return driver
 
     return None
@@ -321,84 +215,65 @@ def get_degradation_for_driver(
 def calculate_strategy_score(item):
     score = 0.0
 
-    position_loss = (
-        item[
-            "projected_rejoin_position"
-        ]
-        - item[
-            "current_position"
-        ]
+    # Чистая потеря: места, которые вернутся после стопов соперников, не считаем.
+    position_loss = max(
+        0,
+        item["projected_net_position"] - item["current_position"]
     )
 
     score -= position_loss * 3
 
-    tyre_age = item[
-        "tyre_age"
-    ]
+    tyre_age = item["tyre_age"]
 
     if tyre_age is not None:
+        low, mid, high = TYRE_AGE_THRESHOLDS.get(
+            item["compound"],
+            TYRE_AGE_THRESHOLDS["MEDIUM"]
+        )
 
-        if tyre_age >= 30:
+        if tyre_age >= high:
             score += 3
-
-        elif tyre_age >= 20:
+        elif tyre_age >= mid:
             score += 2
-
-        elif tyre_age >= 10:
+        elif tyre_age >= low:
             score += 1
 
-    degradation_level = item[
-        "degradation_level"
-    ]
+    degradation_level = item["degradation_level"]
 
     if degradation_level == "HIGH":
         score += 3
-
     elif degradation_level == "MODERATE":
         score += 2
-
     elif degradation_level == "LOW":
         score += 1
 
-    fresh_gain = item[
-        "fresh_tyre_gain_per_lap"
-    ]
+    fresh_gain = item["fresh_tyre_gain_per_lap"]
 
     if fresh_gain is not None:
-
         if fresh_gain >= 1.5:
             score += 3
-
         elif fresh_gain >= 1.0:
             score += 2
-
         elif fresh_gain >= 0.5:
             score += 1
 
-    traffic_level = item[
-        "traffic_level"
-    ]
+    traffic_level = item["traffic_level"]
 
     if traffic_level == "MODERATE":
         score -= 2
-
     elif traffic_level == "HEAVY":
         score -= 4
 
-    effective_gap = item[
-        "effective_projected_gap"
-    ]
+    # Штраф за отрыв от лидера удалён: он не связан с выгодой стопа.
 
-    if effective_gap is not None:
-        score -= (
-            effective_gap
-            / 20
-        )
+    return round(score, 2)
 
-    return round(
-        score,
-        2
-    )
+
+def downgrade_status(status):
+    if status == "STRONG":
+        return "POSSIBLE"
+
+    return "WEAK"
 
 
 def classify_strategy(score):
@@ -411,66 +286,39 @@ def classify_strategy(score):
     return "STAY_OUT"
 
 
-def find_continuous_window(
-    results
-):
+def find_continuous_window(results):
     eligible = [
         item["lap"]
         for item in results
-        if item["decision"]
-        in {
-            "PIT",
-            "CONSIDER"
-        }
+        if item["decision"] in {"PIT", "CONSIDER"}
     ]
 
     if not eligible:
         return []
 
     groups = []
-    current_group = [
-        eligible[0]
-    ]
+    current_group = [eligible[0]]
 
     for lap in eligible[1:]:
-
-        if (
-            lap
-            == current_group[-1] + 1
-        ):
-            current_group.append(
-                lap
-            )
-
+        if lap == current_group[-1] + 1:
+            current_group.append(lap)
         else:
-            groups.append(
-                current_group
-            )
+            groups.append(current_group)
+            current_group = [lap]
 
-            current_group = [
-                lap
-            ]
+    groups.append(current_group)
 
-    groups.append(
-        current_group
-    )
-
-    best_group = max(
+    return max(
         groups,
         key=lambda group: (
             len(group),
             max(
-                item[
-                    "strategy_score"
-                ]
+                item["strategy_score"]
                 for item in results
-                if item["lap"]
-                in group
+                if item["lap"] in group
             )
         )
     )
-
-    return best_group
 
 
 def calculate_pit_window(
@@ -479,290 +327,119 @@ def calculate_pit_window(
     window_size=5,
     post_pit_laps=3
 ):
+    # Всё считается по состоянию на start_lap. Будущие круги не читаются:
+    # отрывы держим как сейчас, растёт только возраст шин.
+    race_state = get_race_state(start_lap)
+
+    rejoin = calculate_rejoin(start_lap, driver_number, race_state)
+
+    empty = {
+        "driver_number": driver_number,
+        "window": [],
+        "best_lap": None,
+        "best_score": None,
+        "best_projected_position": None,
+        "optimal_window": [],
+        "recommendation": "NO_DATA"
+    }
+
+    if rejoin is None:
+        return empty
+
+    degradation = get_degradation_for_driver(start_lap, driver_number)
+
+    degradation_level = (
+        degradation["degradation_level"]
+        if degradation
+        else "INSUFFICIENT_DATA"
+    )
+
+    traffic = analyze_rejoin_traffic(
+        start_lap,
+        driver_number,
+        rejoin["projected_gap"],
+        race_state=race_state
+    )
+
     results = []
 
-    for lap in range(
-        start_lap,
-        start_lap + window_size
-    ):
+    for offset in range(window_size):
+        lap = start_lap + offset
 
-        try:
-            rejoin = calculate_rejoin(
-                lap,
-                driver_number
-            )
-
-        except (
-            ValueError,
-            IndexError
-        ):
+        if lap > LAST_LAP:
             break
 
-        except Exception:
-            break
-
-        if rejoin is None:
-            continue
-
-        fresh_tyre_gain = (
-            get_phase_gain(
-                lap
-            )
-        )
+        fresh_tyre_gain = get_phase_gain(lap, start_lap)
 
         expected_gain = None
         effective_projected_gap = None
 
         if fresh_tyre_gain is not None:
-
-            expected_gain = round(
-                fresh_tyre_gain
-                * post_pit_laps,
-                3
-            )
-
+            expected_gain = round(fresh_tyre_gain * post_pit_laps, 3)
             effective_projected_gap = round(
-                rejoin["projected_gap"]
-                - expected_gain,
+                rejoin["projected_gap"] - expected_gain,
                 3
             )
 
-        try:
-            degradation = (
-                get_degradation_for_driver(
-                    lap,
-                    rejoin["driver"]
-                )
-            )
-
-        except Exception:
-            degradation = None
-
-        degradation_level = (
-            "INSUFFICIENT_DATA"
+        tyre_age = (
+            rejoin["tyre_age"] + offset
+            if rejoin["tyre_age"] is not None
+            else None
         )
-
-        if degradation:
-            degradation_level = (
-                degradation[
-                    "degradation_level"
-                ]
-            )
-
-        try:
-            traffic = (
-                analyze_rejoin_traffic(
-                    lap,
-                    driver_number,
-                    rejoin[
-                        "projected_gap"
-                    ]
-                )
-            )
-
-        except Exception:
-            traffic = {
-                "traffic_level":
-                    "UNKNOWN",
-                "car_ahead":
-                    None,
-                "gap_ahead":
-                    None,
-                "car_behind":
-                    None,
-                "gap_behind":
-                    None
-            }
 
         result = {
             **rejoin,
-            "phase":
-                get_race_phase(lap),
-            "fresh_tyre_gain_per_lap":
-                fresh_tyre_gain,
-            "post_pit_laps":
-                post_pit_laps,
-            "expected_gain":
-                expected_gain,
-            "effective_projected_gap":
-                effective_projected_gap,
-            "degradation_level":
-                degradation_level,
-            "traffic_level":
-                traffic[
-                    "traffic_level"
-                ],
-            "car_ahead":
-                traffic[
-                    "car_ahead"
-                ],
-            "gap_ahead":
-                traffic[
-                    "gap_ahead"
-                ],
-            "car_behind":
-                traffic[
-                    "car_behind"
-                ],
-            "gap_behind":
-                traffic[
-                    "gap_behind"
-                ]
+            "lap": lap,
+            "tyre_age": tyre_age,
+            "phase": get_race_phase(lap),
+            "fresh_tyre_gain_per_lap": fresh_tyre_gain,
+            "post_pit_laps": post_pit_laps,
+            "expected_gain": expected_gain,
+            "effective_projected_gap": effective_projected_gap,
+            "degradation_level": degradation_level,
+            **traffic
         }
 
-        strategy_score = (
-            calculate_strategy_score(
-                result
-            )
-        )
+        result["strategy_score"] = calculate_strategy_score(result)
+        result["decision"] = classify_strategy(result["strategy_score"])
 
-        result[
-            "strategy_score"
-        ] = strategy_score
-
-        result[
-            "decision"
-        ] = classify_strategy(
-            strategy_score
-        )
-
-        results.append(
-            result
-        )
+        results.append(result)
 
     if not results:
-        return {
-            "driver_number":
-                driver_number,
-            "window":
-                [],
-            "best_lap":
-                None,
-            "best_score":
-                None,
-            "best_projected_position":
-                None,
-            "optimal_window":
-                [],
-            "recommendation":
-                "NO_DATA"
-        }
+        return empty
 
-    best_result = max(
-        results,
-        key=lambda item:
-            item[
-                "strategy_score"
-            ]
-    )
+    best_result = max(results, key=lambda item: item["strategy_score"])
+
+    recommendation = best_result["decision"]
 
     optimal_window = (
-        find_continuous_window(
-            results
-        )
+        []
+        if recommendation == "STAY_OUT"
+        else find_continuous_window(results)
     )
 
-    if (
-        best_result["decision"]
-        == "PIT"
-    ):
-        recommendation = "PIT"
-
-    elif (
-        best_result["decision"]
-        == "CONSIDER"
-    ):
-        recommendation = "CONSIDER"
-
-    else:
-        recommendation = "STAY_OUT"
-
-    if (
-        recommendation
-        == "STAY_OUT"
-    ):
-        optimal_window = []
-
     return {
-        "driver_number":
-            driver_number,
-        "window":
-            results,
-        "best_lap":
-            (
-                best_result["lap"]
-                if recommendation
-                != "STAY_OUT"
-                else None
-            ),
-        "best_score":
-            best_result[
-                "strategy_score"
-            ],
-        "best_projected_position":
-            best_result[
-                "projected_rejoin_position"
-            ],
-        "optimal_window":
-            optimal_window,
-        "recommendation":
-            recommendation
+        "driver_number": driver_number,
+        "window": results,
+        "best_lap": (
+            best_result["lap"]
+            if recommendation != "STAY_OUT"
+            else None
+        ),
+        "best_score": best_result["strategy_score"],
+        "best_projected_position": best_result["projected_rejoin_position"],
+        "optimal_window": optimal_window,
+        "recommendation": recommendation
     }
 
 
 if __name__ == "__main__":
-    tests = [
-        (25, 4),
-        (60, 12),
-        (70, 4)
-    ]
+    for lap, driver_number in [(25, 4), (60, 12), (70, 4)]:
+        result = calculate_pit_window(start_lap=lap, driver_number=driver_number)
 
-    for lap, driver_number in tests:
-
-        print()
-        print("=" * 70)
-
-        try:
-            result = calculate_pit_window(
-                start_lap=lap,
-                driver_number=driver_number,
-                window_size=5,
-                post_pit_laps=3
-            )
-
-            print(
-                "lap:",
-                lap
-            )
-
-            print(
-                "recommendation:",
-                result[
-                    "recommendation"
-                ]
-            )
-
-            print(
-                "best lap:",
-                result[
-                    "best_lap"
-                ]
-            )
-
-            print(
-                "window:",
-                [
-                    item["lap"]
-                    for item
-                    in result["window"]
-                ]
-            )
-
-        except Exception as error:
-            print(
-                {
-                    "lap": lap,
-                    "error":
-                        str(error)
-                }
-            )
+        print(
+            "lap:", lap,
+            "| recommendation:", result["recommendation"],
+            "| best lap:", result["best_lap"],
+            "| window:", [item["lap"] for item in result["window"]]
+        )

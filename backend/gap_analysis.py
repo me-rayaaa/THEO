@@ -1,23 +1,10 @@
+from data_store import NEUTRALIZED_STATUSES, RaceStatus, get_numeric_gap
 from race_state import get_race_state
 
-
-def get_numeric_gap(gap):
-    if gap is None:
-        return None
-
-    if isinstance(gap, (int, float)):
-        return float(gap)
-
-    if isinstance(gap, str):
-        if "LAP" in gap.upper():
-            return None
-
-        try:
-            return float(gap)
-        except ValueError:
-            return None
-
-    return None
+SKIP_STATUSES = NEUTRALIZED_STATUSES | {
+    RaceStatus.RED_FLAG.value,
+    RaceStatus.FINISHED.value,
+}
 
 
 def had_pit_stop_in_window(
@@ -57,28 +44,18 @@ def calculate_gap_trend(
     comparison_laps=3,
     max_battle_gap=15.0
 ):
-    current_state = get_race_state(target_lap)
-
-    if current_state["race_status"] in {
-        "VSC",
-        "SAFETY CAR",
-        "FINISHED"
-    }:
-        return []
-
     previous_lap = target_lap - comparison_laps
 
     if previous_lap < 2:
         return []
 
-    previous_state = get_race_state(previous_lap)
+    # Нейтрализация на ЛЮБОМ круге окна искажает отрывы.
+    for lap in range(previous_lap, target_lap + 1):
+        if get_race_state(lap)["race_status"] in SKIP_STATUSES:
+            return []
 
-    if previous_state["race_status"] in {
-        "VSC",
-        "SAFETY CAR",
-        "FINISHED"
-    }:
-        return []
+    current_state = get_race_state(target_lap)
+    previous_state = get_race_state(previous_lap)
 
     current_drivers = {
         driver["driver_number"]: driver
@@ -132,21 +109,10 @@ def calculate_gap_trend(
         ):
             continue
 
-        current_driver_gap = get_numeric_gap(
-            current_driver["gap"]
-        )
-
-        current_ahead_gap = get_numeric_gap(
-            current_ahead["gap"]
-        )
-
-        previous_driver_gap = get_numeric_gap(
-            previous_driver["gap"]
-        )
-
-        previous_ahead_gap = get_numeric_gap(
-            previous_ahead["gap"]
-        )
+        current_driver_gap = get_numeric_gap(current_driver["gap"])
+        current_ahead_gap = get_numeric_gap(current_ahead["gap"])
+        previous_driver_gap = get_numeric_gap(previous_driver["gap"])
+        previous_ahead_gap = get_numeric_gap(previous_ahead["gap"])
 
         if (
             current_driver_gap is None
@@ -198,6 +164,8 @@ def calculate_gap_trend(
             trend = "STABLE"
 
         result.append({
+            "driver_number": driver_number,
+            "target_number": ahead_number,
             "driver": driver["name"],
             "position": driver["position"],
             "target": driver_ahead["name"],
@@ -213,14 +181,10 @@ def calculate_gap_trend(
 
 
 if __name__ == "__main__":
-    trends = calculate_gap_trend(25, 3)
-
-    for item in trends:
+    for item in calculate_gap_trend(25, 3):
         print(
             f'P{item["position"]} {item["driver"]} -> '
             f'P{item["target_position"]} {item["target"]} - '
             f'gap: {item["previous_gap"]} -> {item["current_gap"]} - '
-            f'change: {item["gap_change"]} - '
-            f'rate: {item["closing_rate"]} s/lap - '
             f'{item["trend"]}'
         )

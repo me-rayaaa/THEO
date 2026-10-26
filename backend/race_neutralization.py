@@ -1,40 +1,15 @@
+from data_store import NEUTRALIZED_STATUSES, RaceStatus
 from race_state import get_race_state
+
+KNOWN_STATUSES = {status.value for status in RaceStatus}
 
 
 def normalize_race_status(status):
-    if status is None:
-        return "UNKNOWN"
+    # Точное сравнение: подстрока "RED" ловила "CHEQUERED" и "CLEARED".
+    if status in KNOWN_STATUSES:
+        return status
 
-    value = str(status).upper().strip()
-
-    if "VSC" in value or "VIRTUAL SAFETY" in value:
-        return "VSC"
-
-    if (
-        "SAFETY CAR" in value
-        or value == "SC"
-    ):
-        return "SAFETY_CAR"
-
-    if (
-        "RED" in value
-        or "RED FLAG" in value
-    ):
-        return "RED_FLAG"
-
-    if (
-        "YELLOW" in value
-        or "DOUBLE YELLOW" in value
-    ):
-        return "YELLOW"
-
-    if (
-        "GREEN" in value
-        or "CLEAR" in value
-    ):
-        return "GREEN"
-
-    return value
+    return "UNKNOWN"
 
 
 def get_neutralization_context(target_lap):
@@ -48,10 +23,7 @@ def get_neutralization_context(target_lap):
         raw_status
     )
 
-    neutralized = status in {
-        "VSC",
-        "SAFETY_CAR"
-    }
+    neutralized = status in NEUTRALIZED_STATUSES
 
     if status == "SAFETY_CAR":
         pit_opportunity = "HIGH"
@@ -89,6 +61,12 @@ def get_neutralization_context(target_lap):
             "Track conditions are restricted, but normal pit-loss assumptions are not automatically changed."
         )
 
+    elif status == "FINISHED":
+        message = (
+            "The race has finished. "
+            "No further pit strategy applies."
+        )
+
     elif status == "GREEN":
         message = (
             "The race is under green-flag conditions. "
@@ -112,27 +90,5 @@ def get_neutralization_context(target_lap):
 
 
 if __name__ == "__main__":
-    tests = [
-        25,
-        60,
-        70
-    ]
-
-    for lap in tests:
-        print()
-        print("=" * 70)
-
-        try:
-            result = get_neutralization_context(
-                lap
-            )
-
-            print(result)
-
-        except Exception as error:
-            print(
-                {
-                    "lap": lap,
-                    "error": str(error)
-                }
-            )
+    for lap in [25, 60, 70]:
+        print(get_neutralization_context(lap))

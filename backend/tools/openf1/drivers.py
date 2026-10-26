@@ -2,7 +2,7 @@ import requests
 
 url = "https://api.openf1.org/v1/drivers?session_key=9877"
 
-response = requests.get(url)
+response = requests.get(url, timeout=30)
 data = response.json()
 
 for driver in data:

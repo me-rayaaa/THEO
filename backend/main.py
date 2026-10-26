@@ -1,6 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from data_store import LapOutOfRange
 from race_state import get_race_state
 from race_changes import get_lap_changes
 from analysis import build_analysis
@@ -10,8 +12,17 @@ from strategy_commentary import build_strategy_commentary
 from rival_strategy_commentary import build_rival_strategy_commentary
 from rival_strategy_decision import build_rival_strategy_decision
 from team_engineer_strategy import build_team_engineer_strategy
+from theo_intervention import build_theo_intervention
+
+TOP_N = 10
 
 app = FastAPI()
+
+
+@app.exception_handler(LapOutOfRange)
+def lap_out_of_range(request: Request, error: LapOutOfRange):
+    # Неверный круг — понятный 404, а не 500.
+    return JSONResponse(status_code=404, content={"detail": str(error)})
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,8 +30,8 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_credentials=False,
+    allow_methods=["GET"],
     allow_headers=["*"],
 )
 
@@ -35,7 +46,10 @@ def root():
 
 @app.get("/api/race/{lap_number}")
 def race(lap_number: int):
-    return get_race_state(lap_number)
+    race_state = get_race_state(lap_number)
+    # Модель считает по всем 20 пилотам, экран показывает первые 10.
+    race_state["drivers"] = race_state["drivers"][:TOP_N]
+    return race_state
 
 
 @app.get("/api/race/{lap_number}/top10")
@@ -44,7 +58,7 @@ def top10(lap_number: int):
 
     return {
         "current_lap": race_state["current_lap"],
-        "drivers": race_state["drivers"]
+        "drivers": race_state["drivers"][:TOP_N]
     }
 
 
@@ -139,6 +153,19 @@ def team_engineer(
     driver_number: int
 ):
     return build_team_engineer_strategy(
+        target_lap=lap_number,
+        driver_number=driver_number
+    )
+
+
+@app.get(
+    "/api/race/{lap_number}/intervention/{driver_number}"
+)
+def intervention(
+    lap_number: int,
+    driver_number: int
+):
+    return build_theo_intervention(
         target_lap=lap_number,
         driver_number=driver_number
     )

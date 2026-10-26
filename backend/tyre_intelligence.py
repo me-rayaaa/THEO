@@ -7,20 +7,22 @@ def build_tyre_intelligence(target_lap):
     tyre_data = calculate_tyre_degradation(target_lap)
 
     tyre_by_driver = {
-        item["driver"]: item
+        item["driver_number"]: item
         for item in tyre_data["drivers"]
     }
 
     results = []
 
     for battle in race_intelligence["battles"]:
-        driver_tyre = tyre_by_driver.get(battle["driver"])
-        target_tyre = tyre_by_driver.get(battle["target"])
+        driver_tyre = tyre_by_driver.get(battle["driver_number"])
+        target_tyre = tyre_by_driver.get(battle["target_number"])
 
         if driver_tyre is None or target_tyre is None:
             continue
 
         results.append({
+            "driver_number": battle["driver_number"],
+            "target_number": battle["target_number"],
             "driver": battle["driver"],
             "position": battle["position"],
             "target": battle["target"],
@@ -45,15 +47,10 @@ def build_tyre_intelligence(target_lap):
 
 
 if __name__ == "__main__":
-    result = build_tyre_intelligence(60)
-
-    for battle in result["battles"]:
+    for battle in build_tyre_intelligence(60)["battles"]:
         print(
             f'P{battle["position"]} {battle["driver"]} -> '
             f'P{battle["target_position"]} {battle["target"]} | '
-            f'gap: {battle["gap"]} | '
-            f'rate: {battle["closing_rate"]} | '
-            f'{battle["gap_trend"]} | '
             f'{battle["driver_degradation_level"]} vs '
             f'{battle["target_degradation_level"]}'
         )

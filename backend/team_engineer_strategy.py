@@ -6,32 +6,23 @@ from race_state import get_race_state
 from race_neutralization import get_neutralization_context
 
 
-def get_driver_degradation(target_lap, driver_name):
-    try:
-        data = calculate_tyre_degradation(target_lap)
-    except Exception:
-        return None
+# Исключения больше не глотаются: ошибка должна быть видна в API и в тесте.
+
+def get_driver_degradation(target_lap, driver_number):
+    data = calculate_tyre_degradation(target_lap)
 
     for item in data["drivers"]:
-        if item["driver"] == driver_name:
+        if item["driver_number"] == driver_number:
             return item
 
     return None
 
 
-def get_driver_battle(target_lap, driver_name):
-    try:
-        data = analyze_battles(target_lap)
-    except Exception:
-        return None
+def get_driver_battle(target_lap, driver_number):
+    data = analyze_battles(target_lap)
 
-    if isinstance(data, dict):
-        battles = data.get("battles", [])
-    else:
-        battles = data
-
-    for battle in battles:
-        if battle.get("driver") == driver_name:
+    for battle in data["battles"]:
+        if battle["driver_number"] == driver_number:
             return battle
 
     return None
@@ -58,15 +49,11 @@ def get_rival_decision(
     if target is None:
         return None
 
-    try:
-        return build_rival_strategy_decision(
-            target_lap=target_lap,
-            driver_number=driver_number,
-            target_driver_number=target["driver_number"]
-        )
-
-    except Exception:
-        return None
+    return build_rival_strategy_decision(
+        target_lap=target_lap,
+        driver_number=driver_number,
+        target_driver_number=target["driver_number"]
+    )
 
 
 def build_team_engineer_strategy(
@@ -91,30 +78,16 @@ def build_team_engineer_strategy(
             "message": "No driver data available."
         }
 
-    neutralization = get_neutralization_context(
-        target_lap
+    neutralization = get_neutralization_context(target_lap)
+
+    strategy = build_strategy_commentary(
+        target_lap=target_lap,
+        driver_number=driver_number
     )
 
-    try:
-        strategy = build_strategy_commentary(
-            target_lap=target_lap,
-            driver_number=driver_number
-        )
+    degradation = get_driver_degradation(target_lap, driver_number)
 
-    except Exception:
-        strategy = {
-            "recommendation": "NO_DATA"
-        }
-
-    degradation = get_driver_degradation(
-        target_lap,
-        driver["name"]
-    )
-
-    battle = get_driver_battle(
-        target_lap,
-        driver["name"]
-    )
+    battle = get_driver_battle(target_lap, driver_number)
 
     rival = get_rival_decision(
         target_lap=target_lap,
@@ -123,10 +96,7 @@ def build_team_engineer_strategy(
         race_state=race_state
     )
 
-    pit_recommendation = strategy.get(
-        "recommendation",
-        "NO_DATA"
-    )
+    pit_recommendation = strategy.get("recommendation", "NO_DATA")
 
     degradation_level = (
         degradation["degradation_level"]
@@ -134,17 +104,9 @@ def build_team_engineer_strategy(
         else "INSUFFICIENT_DATA"
     )
 
-    battle_priority = (
-        battle["priority"]
-        if battle
-        else None
-    )
+    battle_priority = battle["priority"] if battle else None
 
-    rival_decision = (
-        rival["decision"]
-        if rival
-        else None
-    )
+    rival_decision = rival["decision"] if rival else None
 
     race_status = neutralization["status"]
     neutralized = neutralization["neutralized"]
@@ -167,20 +129,14 @@ def build_team_engineer_strategy(
 
         elif (
             rival_decision == "UNDERCUT_PREFERRED"
-            and degradation_level in {
-                "MODERATE",
-                "HIGH"
-            }
+            and degradation_level in {"MODERATE", "HIGH"}
         ):
             pit_now_trigger = True
 
         elif (
             neutralized
             and (
-                degradation_level in {
-                    "MODERATE",
-                    "HIGH"
-                }
+                degradation_level in {"MODERATE", "HIGH"}
                 or rival_decision == "UNDERCUT_PREFERRED"
                 or battle_priority == "HIGH"
             )
@@ -228,11 +184,7 @@ def build_team_engineer_strategy(
         final_decision = "HOLD_AND_MONITOR"
 
     elif pit_recommendation == "NO_DATA":
-
-        if neutralized:
-            final_decision = "HOLD_AND_MONITOR"
-        else:
-            final_decision = "NO_DATA"
+        final_decision = "HOLD_AND_MONITOR" if neutralized else "NO_DATA"
 
     else:
         final_decision = "HOLD_AND_MONITOR"
@@ -240,9 +192,7 @@ def build_team_engineer_strategy(
     reasons = []
 
     if pit_recommendation == "PIT":
-        reasons.append(
-            "The current pit model shows an active pit window."
-        )
+        reasons.append("The current pit model shows an active pit window.")
 
     elif pit_recommendation == "CONSIDER":
         reasons.append(
@@ -250,13 +200,11 @@ def build_team_engineer_strategy(
         )
 
     elif pit_recommendation == "STAY_OUT":
-        reasons.append(
-            "The current pit model favors staying out."
-        )
+        reasons.append("The current pit model favors staying out.")
 
     elif pit_recommendation == "NO_DATA":
         reasons.append(
-            "The normal pit model does not have enough forward race data to produce a full recommendation."
+            "The pit model does not have enough data to produce a recommendation."
         )
 
     if race_status == "VSC":
@@ -280,24 +228,16 @@ def build_team_engineer_strategy(
         )
 
     if degradation_level == "HIGH":
-        reasons.append(
-            "Tyre degradation is showing a strong pace-loss signal."
-        )
+        reasons.append("Tyre degradation is showing a strong pace-loss signal.")
 
     elif degradation_level == "MODERATE":
-        reasons.append(
-            "Tyre degradation is becoming relevant."
-        )
+        reasons.append("Tyre degradation is becoming relevant.")
 
     elif degradation_level == "LOW":
-        reasons.append(
-            "Tyre degradation is currently limited."
-        )
+        reasons.append("Tyre degradation is currently limited.")
 
     elif degradation_level == "NO_CLEAR_DEGRADATION_SIGNAL":
-        reasons.append(
-            "There is no clear tyre degradation signal at the moment."
-        )
+        reasons.append("There is no clear tyre degradation signal at the moment.")
 
     if rival_decision == "UNDERCUT_PREFERRED":
         reasons.append(
@@ -320,14 +260,10 @@ def build_team_engineer_strategy(
         )
 
     if battle_priority == "HIGH":
-        reasons.append(
-            "The driver is involved in a high-priority battle."
-        )
+        reasons.append("The driver is involved in a high-priority battle.")
 
     elif battle_priority == "MEDIUM":
-        reasons.append(
-            "There is moderate battle pressure around the driver."
-        )
+        reasons.append("There is moderate battle pressure around the driver.")
 
     if final_decision == "PIT_NOW":
 
@@ -355,10 +291,7 @@ def build_team_engineer_strategy(
 
     elif final_decision == "HOLD_AND_MONITOR":
 
-        if (
-            neutralized
-            and pit_recommendation == "NO_DATA"
-        ):
+        if neutralized and pit_recommendation == "NO_DATA":
             reasons.append(
                 "The neutralization creates a strategic opportunity, but there is not enough remaining race data to justify a stronger recommendation."
             )
@@ -380,8 +313,6 @@ def build_team_engineer_strategy(
                 "No secondary signal is strong enough to override the stay-out recommendation."
             )
 
-    message = " ".join(reasons)
-
     return {
         "lap": target_lap,
         "driver": driver["name"],
@@ -397,34 +328,10 @@ def build_team_engineer_strategy(
         "neutralization_trigger": neutralization_trigger,
         "pit_now_trigger": pit_now_trigger,
         "pit_window_trigger": pit_window_trigger,
-        "message": message
+        "message": " ".join(reasons)
     }
 
 
 if __name__ == "__main__":
-    tests = [
-        (70, 4),
-        (70, 16),
-        (70, 1)
-    ]
-
-    for lap, driver_number in tests:
-        print()
-        print("=" * 70)
-
-        try:
-            result = build_team_engineer_strategy(
-                target_lap=lap,
-                driver_number=driver_number
-            )
-
-            print(result)
-
-        except Exception as error:
-            print(
-                {
-                    "lap": lap,
-                    "driver_number": driver_number,
-                    "error": str(error)
-                }
-            )
+    for lap, driver_number in [(70, 4), (70, 16), (70, 1)]:
+        print(build_team_engineer_strategy(lap, driver_number))

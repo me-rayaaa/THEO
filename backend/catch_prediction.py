@@ -22,6 +22,8 @@ def predict_catch(target_lap):
             continue
 
         predictions.append({
+            "driver_number": battle["driver_number"],
+            "target_number": battle["target_number"],
             "driver": battle["driver"],
             "target": battle["target"],
             "gap": gap,
@@ -37,13 +39,8 @@ def predict_catch(target_lap):
 
 
 if __name__ == "__main__":
-    result = predict_catch(60)
-
-    for item in result["predictions"]:
+    for item in predict_catch(60)["predictions"]:
         print(
-            f'{item["driver"]} -> '
-            f'{item["target"]} | '
-            f'gap: {item["gap"]} | '
-            f'rate: {item["closing_rate"]} | '
+            f'{item["driver"]} -> {item["target"]} | '
             f'catch in: {item["laps_to_catch"]} laps'
         )

@@ -1,17 +1,14 @@
-import json
 from statistics import median
 
-from race_state import get_race_state
-from pace_analysis import get_clean_laps
+from clean_laps import get_clean_laps
+from data_store import fuel_corrected
+from race_state import get_current_stint, get_race_state
 
-stints_file = "../data/mexico_2025/stints.json"
-
-with open(stints_file, "r", encoding="utf-8") as file:
-    stints = json.load(file)
+MIN_DEGRADATION_LAPS = 8
 
 
 def classify_degradation(rate, laps_used):
-    if rate is None or laps_used < 8:
+    if rate is None or laps_used < MIN_DEGRADATION_LAPS:
         return "INSUFFICIENT_DATA"
 
     if rate < 0:
@@ -26,7 +23,7 @@ def classify_degradation(rate, laps_used):
     return "HIGH"
 
 
-def calculate_tyre_degradation(target_lap, min_laps=5):
+def calculate_tyre_degradation(target_lap, min_laps=MIN_DEGRADATION_LAPS):
     race_state = get_race_state(target_lap)
     clean_laps = get_clean_laps(target_lap)
 
@@ -35,22 +32,7 @@ def calculate_tyre_degradation(target_lap, min_laps=5):
     for driver in race_state["drivers"]:
         driver_number = driver["driver_number"]
 
-        current_stint = None
-
-        for stint in stints:
-            if stint["driver_number"] != driver_number:
-                continue
-
-            lap_start = stint["lap_start"]
-            lap_end = stint["lap_end"]
-
-            if lap_start is None:
-                continue
-
-            if lap_start <= target_lap and (
-                lap_end is None or target_lap <= lap_end
-            ):
-                current_stint = stint
+        current_stint = get_current_stint(driver_number, target_lap)
 
         if current_stint is None:
             continue
@@ -76,12 +58,12 @@ def calculate_tyre_degradation(target_lap, min_laps=5):
             second_half = stint_laps[split_index:]
 
             first_median = median(
-                lap["lap_duration"]
+                fuel_corrected(lap)
                 for lap in first_half
             )
 
             second_median = median(
-                lap["lap_duration"]
+                fuel_corrected(lap)
                 for lap in second_half
             )
 
@@ -109,6 +91,7 @@ def calculate_tyre_degradation(target_lap, min_laps=5):
         )
 
         results.append({
+            "driver_number": driver_number,
             "driver": driver["name"],
             "position": driver["position"],
             "compound": current_stint["compound"],

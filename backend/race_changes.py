@@ -1,5 +1,7 @@
 from race_state import get_race_state
 
+TOP_N = 10
+
 
 def compare_states(previous_state, current_state):
     previous_drivers = {
@@ -18,12 +20,22 @@ def compare_states(previous_state, current_state):
         previous = previous_drivers.get(driver_number)
 
         if previous is None:
+            continue
+
+        # Сравниваем весь пелотон, топ-10 определяем по позиции.
+        if current["position"] <= TOP_N < previous["position"]:
             changes.append({
                 "type": "ENTERED_TOP10",
                 "driver": current["name"],
                 "position": current["position"]
             })
-            continue
+
+        if previous["position"] <= TOP_N < current["position"]:
+            changes.append({
+                "type": "LEFT_TOP10",
+                "driver": current["name"],
+                "position": current["position"]
+            })
 
         if current["position"] != previous["position"]:
             changes.append({
@@ -48,18 +60,13 @@ def compare_states(previous_state, current_state):
                 "to": current["compound"]
             })
 
-    for driver_number, previous in previous_drivers.items():
-        if driver_number not in current_drivers:
-            changes.append({
-                "type": "LEFT_TOP10",
-                "driver": previous["name"],
-                "position": previous["position"]
-            })
-
     return changes
 
 
 def get_lap_changes(lap_number):
+    if lap_number == 1:
+        return []
+
     previous_state = get_race_state(lap_number - 1)
     current_state = get_race_state(lap_number)
 

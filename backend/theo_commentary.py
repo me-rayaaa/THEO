@@ -15,8 +15,14 @@ def build_theo_commentary(lap_number):
             event.get("position_from") is not None
             and event.get("position_to") is not None
         ):
+            verb = (
+                "Drops"
+                if event["position_to"] > event["position_from"]
+                else "Moves"
+            )
+
             text += (
-                f' Drops from P{event["position_from"]} '
+                f' {verb} from P{event["position_from"]} '
                 f'to P{event["position_to"]}.'
             )
 
@@ -72,13 +78,5 @@ def build_theo_commentary(lap_number):
 
 
 if __name__ == "__main__":
-    commentary = build_theo_commentary(25)
-
-    for item in commentary["messages"]:
-        print(
-            item["type"],
-            "-",
-            item["priority"],
-            "-",
-            item["message"]
-        )
+    for item in build_theo_commentary(25)["messages"]:
+        print(item["type"], "-", item["priority"], "-", item["message"])

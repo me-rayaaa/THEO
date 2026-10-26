@@ -1,3 +1,4 @@
+import sys
 import _bootstrap
 
 from race_state import get_race_state
@@ -8,7 +9,7 @@ from team_engineer_strategy import build_team_engineer_strategy
 from theo_intervention import build_theo_intervention
 
 
-START_LAP = 10
+START_LAP = 2
 END_LAP = 71
 
 summary = {
@@ -78,10 +79,7 @@ for lap in range(START_LAP, END_LAP + 1):
             "error": str(error)
         })
 
-    drivers = sorted(
-        race_state["drivers"],
-        key=lambda item: item["position"]
-    )[:10]
+    drivers = race_state["drivers"]
 
     for driver in drivers:
 
@@ -323,3 +321,4 @@ else:
     print(
         "REVIEW - Runtime errors were detected."
     )
+    sys.exit(1)

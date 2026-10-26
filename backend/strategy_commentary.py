@@ -1,6 +1,13 @@
 from pit_strategy import calculate_pit_window
 
 
+def laps_text(laps):
+    if len(laps) == 1:
+        return f'lap {laps[0]}'
+
+    return f'laps {laps[0]}–{laps[-1]}'
+
+
 def build_strategy_commentary(
     target_lap,
     driver_number,
@@ -16,14 +23,19 @@ def build_strategy_commentary(
     recommendation = strategy["recommendation"]
 
     if not strategy["window"]:
+        # Та же форма ответа, что и обычно: фронтенд не должен падать.
         return {
             "lap": target_lap,
+            "driver": None,
             "recommendation": "NO_DATA",
+            "best_lap": None,
+            "optimal_window": [],
+            "traffic_level": None,
+            "projected_rejoin_position": None,
             "message": "No strategy data available."
         }
 
-    first_item = strategy["window"][0]
-    driver = first_item["driver"]
+    driver = strategy["window"][0]["driver"]
 
     best_available = max(
         strategy["window"],
@@ -31,22 +43,18 @@ def build_strategy_commentary(
     )
 
     traffic_level = best_available["traffic_level"]
-    projected_position = best_available[
-        "projected_rejoin_position"
-    ]
+    projected_position = best_available["projected_rejoin_position"]
 
     if traffic_level == "CLEAR":
         traffic_text = (
             f'The projected rejoin around P{projected_position} '
             f'looks relatively clear.'
         )
-
     elif traffic_level == "MODERATE":
         traffic_text = (
             f'The projected rejoin around P{projected_position} '
             f'would place the car in moderate traffic.'
         )
-
     else:
         traffic_text = (
             f'The projected rejoin around P{projected_position} '
@@ -54,73 +62,36 @@ def build_strategy_commentary(
         )
 
     if recommendation == "PIT":
-        pit_laps = [
-            item["lap"]
-            for item in strategy["window"]
-            if item["decision"] == "PIT"
-        ]
+        pit_laps = [i["lap"] for i in strategy["window"] if i["decision"] == "PIT"]
+        consider_laps = [i["lap"] for i in strategy["window"] if i["decision"] == "CONSIDER"]
 
-        consider_laps = [
-            item["lap"]
-            for item in strategy["window"]
-            if item["decision"] == "CONSIDER"
-        ]
-
-        message_parts = [
-            f'{driver}: pit window is open.'
-        ]
+        message_parts = [f'{driver}: pit window is open.']
 
         if pit_laps:
-            if len(pit_laps) == 1:
-                pit_window_text = f'lap {pit_laps[0]}'
-            else:
-                pit_window_text = (
-                    f'laps {pit_laps[0]}–{pit_laps[-1]}'
-                )
-
             message_parts.append(
-                f'The preferred pit window is {pit_window_text}, '
-                f'with lap {strategy["best_lap"]} currently '
-                f'scoring highest.'
+                f'The preferred pit window is {laps_text(pit_laps)}, '
+                f'with lap {strategy["best_lap"]} currently scoring highest.'
             )
 
         if consider_laps:
-            if len(consider_laps) == 1:
-                consider_text = f'lap {consider_laps[0]}'
-            else:
-                consider_text = (
-                    f'laps {consider_laps[0]}–'
-                    f'{consider_laps[-1]}'
-                )
-
             message_parts.append(
-                f'An earlier stop around {consider_text} '
+                f'A stop around {laps_text(consider_laps)} '
                 f'is also worth considering.'
             )
 
         message_parts.append(traffic_text)
-
         message = " ".join(message_parts)
 
     elif recommendation == "CONSIDER":
         optimal_window = strategy["optimal_window"]
 
         if optimal_window:
-            if len(optimal_window) == 1:
-                window_text = f'lap {optimal_window[0]}'
-            else:
-                window_text = (
-                    f'laps {optimal_window[0]}–'
-                    f'{optimal_window[-1]}'
-                )
-
             message = (
                 f'{driver}: a pit stop is worth considering around '
-                f'{window_text}, but the model does not show a strong '
-                f'enough advantage for an immediate stop. '
+                f'{laps_text(optimal_window)}, but the model does not show '
+                f'a strong enough advantage for an immediate stop. '
                 f'{traffic_text}'
             )
-
         else:
             message = (
                 f'{driver}: a pit stop is worth considering, '
@@ -128,36 +99,32 @@ def build_strategy_commentary(
                 f'{traffic_text}'
             )
 
+    elif traffic_level == "CLEAR":
+        message = (
+            f'{driver}: stay out. '
+            f'A stop now is projected to rejoin around '
+            f'P{projected_position} in clear air, but the estimated '
+            f'fresh-tyre benefit does not yet outweigh the cost '
+            f'of stopping.'
+        )
+
+    elif traffic_level == "MODERATE":
+        message = (
+            f'{driver}: stay out. '
+            f'A stop now is projected to rejoin around '
+            f'P{projected_position} in moderate traffic. '
+            f'The track-position loss and traffic risk outweigh '
+            f'the estimated fresh-tyre benefit.'
+        )
+
     else:
-        if traffic_level == "CLEAR":
-            message = (
-                f'{driver}: stay out. '
-                f'A stop in the next {window_size} laps is currently '
-                f'projected to lose too much track position, even though '
-                f'the rejoin itself would be relatively clear. '
-                f'The estimated fresh-tyre benefit is not enough '
-                f'to offset that loss.'
-            )
-
-        elif traffic_level == "MODERATE":
-            message = (
-                f'{driver}: stay out. '
-                f'A stop in the next {window_size} laps is currently '
-                f'projected to rejoin around P{projected_position} '
-                f'in moderate traffic. '
-                f'The track-position loss and traffic risk outweigh '
-                f'the estimated fresh-tyre benefit.'
-            )
-
-        else:
-            message = (
-                f'{driver}: stay out. '
-                f'A stop in the next {window_size} laps is currently '
-                f'projected to rejoin around P{projected_position} '
-                f'in heavy traffic. '
-                f'The track-position loss and traffic risk strongly '
-                f'outweigh the estimated fresh-tyre benefit.'
-            )
+        message = (
+            f'{driver}: stay out. '
+            f'A stop now is projected to rejoin around '
+            f'P{projected_position} in heavy traffic. '
+            f'The track-position loss and traffic risk strongly '
+            f'outweigh the estimated fresh-tyre benefit.'
+        )
 
     return {
         "lap": target_lap,
@@ -172,23 +139,6 @@ def build_strategy_commentary(
 
 
 if __name__ == "__main__":
-    tests = [
-        (25, 4),
-        (25, 16),
-        (25, 1),
-        (40, 63),
-        (40, 81),
-        (55, 12)
-    ]
-
-    for lap, driver_number in tests:
-        result = build_strategy_commentary(
-            lap,
-            driver_number
-        )
-
-        print(
-            result["recommendation"],
-            "-",
-            result["message"]
-        )
+    for lap, driver_number in [(25, 4), (25, 16), (40, 63)]:
+        result = build_strategy_commentary(lap, driver_number)
+        print(result["recommendation"], "-", result["message"])
