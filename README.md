@@ -1,131 +1,95 @@
-# THEO — Formula 1 AI Race Engineer
+# THEO — ИИ-гоночный инженер для Формулы 1
 
-THEO is an AI-powered Formula 1 race analysis and strategy assistant designed to interpret race data, evaluate strategic situations and generate engineer-style recommendations during a Grand Prix.
+THEO — ассистент для анализа гонки и стратегии в Формуле 1. Он восстанавливает состояние гонки, оценивает стратегические ситуации и формулирует рекомендации в стиле гоночного инженера.
 
-The MVP combines race-state reconstruction, telemetry-derived analysis, tyre and pit-stop strategy, battle detection, undercut/overcut evaluation and an intervention layer that determines when THEO should actively communicate with the user.
+MVP объединяет восстановление состояния гонки, анализ темпа и шин, стратегию пит-стопов, поиск сражений, оценку undercut и overcut и слой интервенций, который решает, когда THEO стоит активно что-то сообщить пользователю.
 
 ## MVP 1.0
 
-THEO MVP 1.0 was developed and validated using data from the 2025 Mexico City Grand Prix.
+MVP 1.0 разработан и проверен на данных **Гран-при Мехико 2025** (OpenF1, `session_key = 9877`).
 
-The current version reconstructs the race from historical data and processes it as if the race were happening live.
+Гонка воспроизводится по историческим данным так, как будто идёт в прямом эфире. Ключевое правило: **расчёт для круга N использует только данные, известные к концу круга N**. Будущие круги модель не читает, поэтому исторический повтор в дальнейшем можно заменить живым потоком данных.
 
-The architecture is designed so that historical replay can later be replaced by a live Formula 1 data feed without rebuilding the core analytical and strategic layers.
+## Что умеет THEO
 
-## Core capabilities
+- восстанавливать состояние гонки на выбранном круге по всем 20 пилотам;
+- отслеживать позиции, отрывы, состав и возраст шин, пит-стопы;
+- определять «чистые» круги, исключая круги под флагами и круги пит-стопов;
+- анализировать темп с поправкой на топливо в пределах текущего стинта;
+- оценивать деградацию шин;
+- находить сражения и прогнозировать, догонит ли пилот соперника;
+- оценивать окно пит-стопа, позицию после выезда и трафик;
+- сравнивать undercut и overcut против машины впереди;
+- распознавать VSC, Safety Car, жёлтый и красный флаги;
+- формировать решения Team Engineer;
+- решать, когда THEO нужно вмешаться, и не повторять одно и то же сообщение, пока ситуация не изменилась.
 
-THEO MVP 1.0 can:
-
-- reconstruct the race state for a selected lap;
-- track driver positions and gaps;
-- track tyre compound and tyre age;
-- identify pit stops;
-- calculate the last clean lap;
-- filter laps affected by Race Control conditions;
-- analyse driver pace;
-- detect tyre degradation;
-- analyse gaps and battles between drivers;
-- estimate catch scenarios;
-- evaluate pit windows;
-- estimate post-pit rejoin position;
-- analyse post-pit traffic;
-- evaluate undercut opportunities;
-- evaluate overcut opportunities;
-- compare rival strategy options;
-- detect VSC and other race-neutralisation conditions;
-- generate Team Engineer strategy decisions;
-- determine when THEO should actively intervene;
-- suppress repeated strategic messages when the situation has not materially changed.
-
-## Operating modes
-
-The project is designed around two operating modes.
+## Режимы работы
 
 ### Neutral Mode
 
-THEO follows the race as a whole and provides analytical commentary about important developments.
+THEO следит за гонкой целиком и комментирует важные события: пит-стопы, вход в топ-10 и выход из него, сражения.
 
 ### Team Engineer Mode
 
-THEO focuses on a selected driver/team and behaves as a strategy assistant.
+THEO работает на выбранного пилота как стратегический ассистент. Возможные решения:
 
-The Team Engineer layer can produce decisions such as:
+- `PIT_NOW` — заезжать сейчас;
+- `PIT_WINDOW_OPEN` — окно пит-стопа открыто;
+- `STAY_OUT` — оставаться на трассе;
+- `HOLD_AND_MONITOR` — наблюдать, не принимая решения.
 
-- `PIT_NOW`
-- `PIT_WINDOW_OPEN`
-- `STAY_OUT`
-- `HOLD_AND_MONITOR`
+Решение строится на нескольких сигналах: модели пит-стопа, деградации шин, сравнении с соперником, сражении и статусе гонки.
 
-The decision is based on multiple analytical signals rather than a single rule.
-
-## System architecture
-
-The MVP follows a layered architecture:
+## Архитектура
 
 ```text
-Race Data
+Данные гонки (data_store.py)
     ↓
-Race State
+Флаги и чистые круги (clean_laps.py)
     ↓
-Race Intelligence
+Состояние гонки
     ↓
-Pace / Tyres / Battles / Gaps
+Темп / Шины / Сражения / Отрывы
     ↓
-Pit Strategy
+Стратегия пит-стопов
     ↓
 Undercut / Overcut
     ↓
-Rival Strategy
+Стратегия против соперника
     ↓
-Team Engineer
+Team Engineer + нейтрализация гонки
     ↓
-Race Neutralization
+Слой интервенций THEO
     ↓
-THEO Intervention Layer
+API (FastAPI)
     ↓
-API
-    ↓
-Frontend
+Frontend (Next.js)
 ```
 
-This separation allows individual analytical components to be improved without rebuilding the entire application.
+Модель считает по всему пелотону. До 10 пилотов список обрезает только API — для показа на экране.
 
 ## Backend
 
-The backend is written in Python.
+Backend написан на Python.
 
-Main groups of modules include:
+### Данные и настройки
 
-### Race reconstruction
+| Файл | Назначение |
+| --- | --- |
+| `data_store.py` | загрузка всех данных гонки один раз, настройки гонки, статусы, общие функции |
+| `clean_laps.py` | периоды флагов, VSC и Safety Car, статус гонки, «чистые» круги — в одном месте |
+
+### Восстановление гонки
 
 ```text
 race_state.py
-race_replay.py
-race_control.py
 race_changes.py
 race_neutralization.py
+race_replay.py
 ```
 
-These modules reconstruct the race and provide contextual information about the current race state.
-
-### Race data
-
-```text
-laps.py
-positions.py
-intervals.py
-drivers.py
-driver_data.py
-standings.py
-stints.py
-pit_stops.py
-weather.py
-top10.py
-```
-
-These modules provide the underlying driver and race information used by the analytical layer.
-
-### Race analysis
+### Анализ
 
 ```text
 pace_analysis.py
@@ -134,11 +98,10 @@ battle_analysis.py
 catch_prediction.py
 tyre_degradation.py
 tyre_intelligence.py
+race_intelligence.py
 ```
 
-This layer interprets raw race information and identifies strategic signals.
-
-### Pit strategy
+### Стратегия пит-стопов
 
 ```text
 pit_gain_calibration.py
@@ -148,20 +111,17 @@ undercut_analysis.py
 overcut_analysis.py
 ```
 
-The pit strategy layer estimates the consequences of stopping and evaluates alternative strategic scenarios.
+Модель пит-стопа учитывает:
 
-Among other things, it considers:
+- потерю времени на пит-стоп (меньше под VSC и Safety Car);
+- позицию после выезда по всему пелотону;
+- «чистую» позицию: соперники, которые ещё не делали обязательный пит-стоп, потеряют время позже;
+- трафик после выезда;
+- возраст шин с учётом состава;
+- деградацию шин;
+- выигрыш от свежих шин по уже прошедшим пит-стопам этой гонки.
 
-- pit-loss time;
-- projected rejoin position;
-- traffic after the stop;
-- tyre performance;
-- recent pace;
-- track-position loss;
-- undercut potential;
-- overcut potential.
-
-### Strategy intelligence
+### Стратегические решения
 
 ```text
 strategy_commentary.py
@@ -170,100 +130,81 @@ rival_strategy_decision.py
 team_engineer_strategy.py
 ```
 
-This layer combines individual analytical signals into higher-level strategic recommendations.
-
-### THEO intelligence
+### Слой THEO
 
 ```text
 event_intelligence.py
-race_intelligence.py
 theo_commentary.py
 theo_intervention.py
 ```
 
-The intervention layer determines whether a development is important enough for THEO to actively communicate it.
-
-This prevents the assistant from repeating identical messages every lap.
-
-## Intervention priorities
-
-THEO classifies strategic developments by importance.
+## Приоритеты интервенций
 
 ### CRITICAL
 
-Examples:
-
 - `PIT_NOW`;
-- major strategic changes;
-- strong pit triggers during race neutralisation.
+- сильный сигнал к пит-стопу во время нейтрализации.
 
 ### HIGH
 
-Examples:
-
 - `PIT_WINDOW_OPEN`;
-- undercut or overcut opportunities;
-- high-priority battles;
-- strong degradation signals.
+- предпочтителен undercut или overcut;
+- высокая деградация шин;
+- сражение с высоким приоритетом.
 
 ### INFO
 
-Examples:
+- `STAY_OUT` или `HOLD_AND_MONITOR` без изменений.
 
-- stable `STAY_OUT`;
-- `HOLD_AND_MONITOR`;
-- race situations without a meaningful strategic change.
+Сообщение отправляется, только когда меняется решение, рекомендация модели, решение против соперника или статус гонки. Колебания уровня сражения и деградации сами по себе сообщение не вызывают.
 
-THEO compares the current strategic state with the previous lap.
+## Нейтрализация гонки и чистые круги
 
-If nothing meaningful changes, the message can be suppressed.
-
-## Race neutralisation
-
-THEO recognises race-neutralisation conditions separately from normal green-flag running.
-
-The current strategy layer can distinguish conditions including:
+Статусы гонки:
 
 ```text
 GREEN
+YELLOW
 VSC
 SAFETY_CAR
 RED_FLAG
-YELLOW
+FINISHED
 ```
 
-During a VSC or Safety Car period, the pit opportunity can be elevated.
+Флаги учитываются на **весь период действия** — от сообщения о начале до сообщения о снятии, а не только на круге сообщения. Тип флага берётся из поля `flag` в данных Race Control, а не из поиска подстрок в тексте.
 
-However, neutralisation alone does not automatically produce a `PIT_NOW` recommendation. It is combined with tyre, battle and strategic information.
+Из анализа темпа исключаются:
 
-## Race Control and clean laps
+- первый круг;
+- круги под жёлтым флагом, VSC, Safety Car и красным флагом;
+- круг пит-стопа и следующий за ним;
+- круги, которые на момент снимка ещё не закончены.
 
-Race Control information is used to prevent abnormal laps from contaminating pace analysis.
+Нейтрализация сама по себе не даёт `PIT_NOW`: она снижает потерю на пит-стоп в модели и усиливает уже существующие сигналы.
 
-The system can exclude laps affected by events such as:
+## API
 
-- yellow flags;
-- double yellow flags;
-- slippery-track conditions;
-- relevant Race Control restrictions;
-- pit-related laps;
-- other laps unsuitable for normal pace comparison.
+| Адрес | Что возвращает |
+| --- | --- |
+| `/api/race/{lap}` | состояние гонки, топ-10 |
+| `/api/race/{lap}/top10` | топ-10 |
+| `/api/race/{lap}/weather` | погода |
+| `/api/race/{lap}/status` | статус гонки |
+| `/api/race/{lap}/changes` | изменения по сравнению с прошлым кругом |
+| `/api/race/{lap}/analysis` | основные события круга |
+| `/api/race/{lap}/events` | пит-стопы и изменения топ-10 |
+| `/api/race/{lap}/theo` | комментарии THEO |
+| `/api/race/{lap}/strategy/{driver}` | окно пит-стопа для пилота |
+| `/api/race/{lap}/rival-strategy/{driver}/{target}` | анализ undercut |
+| `/api/race/{lap}/rival-decision/{driver}/{target}` | undercut против overcut |
+| `/api/race/{lap}/team-engineer/{driver}` | решение Team Engineer |
+| `/api/race/{lap}/intervention/{driver}` | нужно ли THEO вмешаться |
 
-This produces a cleaner pace dataset for downstream analysis.
+Номер круга вне диапазона 1–71 возвращает `404` с понятным сообщением.
 
-## Test race
+## Тестовая гонка
 
-The current MVP uses:
-
-**Mexico City Grand Prix 2025**
-
-Race data is stored in:
-
-```text
-data/mexico_2025/
-```
-
-Current datasets include:
+Данные лежат в `data/mexico_2025/`:
 
 ```text
 drivers.json
@@ -276,174 +217,124 @@ stints.json
 weather.json
 ```
 
-## Project structure
+## Структура проекта
 
 ```text
 THEO/
-│
 ├── backend/
 │   ├── main.py
+│   ├── data_store.py
+│   ├── clean_laps.py
 │   ├── race_state.py
-│   ├── race_replay.py
-│   ├── race_control.py
-│   ├── race_changes.py
-│   ├── race_neutralization.py
-│   ├── pace_analysis.py
-│   ├── gap_analysis.py
-│   ├── battle_analysis.py
-│   ├── catch_prediction.py
-│   ├── tyre_degradation.py
-│   ├── tyre_intelligence.py
-│   ├── pit_strategy.py
-│   ├── undercut_analysis.py
-│   ├── overcut_analysis.py
-│   ├── rival_strategy_decision.py
-│   ├── team_engineer_strategy.py
-│   ├── theo_commentary.py
-│   ├── theo_intervention.py
-│   │
+│   ├── ...                     # модули анализа и стратегии
+│   ├── requirements.txt
 │   ├── tests/
-│   │   ├── _bootstrap.py
+│   │   ├── conftest.py
+│   │   ├── test_fixes.py       # pytest-тесты
 │   │   ├── test_mvp_end_to_end.py
-│   │   ├── test_overcut_candidates.py
 │   │   ├── test_overcut_scan.py
-│   │   ├── test_pit_strategy.py
-│   │   └── test_team_engineer_scan.py
-│   │
+│   │   └── test_pit_strategy.py
 │   └── tools/
+│       ├── download_race_data.py
 │       ├── check_tyre_age.py
-│       └── download_race_data.py
-│
+│       └── openf1/             # вспомогательные скрипты для просмотра данных OpenF1
 ├── data/
 │   └── mexico_2025/
-│
 ├── frontend/
 │   ├── app/
 │   │   ├── RaceDashboard.tsx
 │   │   ├── globals.css
 │   │   ├── layout.tsx
 │   │   └── page.tsx
-│   │
 │   └── package.json
-│
 ├── .gitignore
 └── README.md
 ```
 
-## Frontend
+## Запуск
 
-The frontend is built with Next.js and TypeScript.
+### Backend
 
-The main race interface is implemented in:
-
-```text
-frontend/app/RaceDashboard.tsx
-```
-
-The interface is designed to display race information together with THEO's analytical and strategic output.
-
-## Running the backend
-
-Activate the Python virtual environment.
-
-From the project root:
+Нужен Python 3.10 или новее. Из корня проекта:
 
 ```bash
+python3 -m venv .venv
 source .venv/bin/activate
-```
-
-Move to the backend:
-
-```bash
+pip install -r backend/requirements.txt
 cd backend
-```
-
-Start the backend:
-
-```bash
 uvicorn main:app --reload
 ```
 
-## Running the frontend
+Проверка: http://127.0.0.1:8000/api/race/25
 
-Open another terminal.
+### Frontend
 
-From the project root:
+Нужен Node.js 20 или новее. В отдельном терминале из корня проекта:
 
 ```bash
 cd frontend
-```
-
-Start the development server:
-
-```bash
+npm install
 npm run dev
 ```
 
-The backend and frontend should run simultaneously during development.
+Откройте http://localhost:3000. Backend и frontend должны работать одновременно.
 
-## Testing
+Если backend запущен не на `http://127.0.0.1:8000`, укажите адрес в переменной `NEXT_PUBLIC_API_URL`.
 
-Tests are stored in:
-
-```text
-backend/tests/
-```
-
-The main full-system test is:
-
-```text
-test_mvp_end_to_end.py
-```
-
-From the `backend` directory run:
+### Загрузка данных заново
 
 ```bash
+python3 backend/tools/download_race_data.py
+```
+
+Скрипт берёт `SESSION_KEY` из `data_store.py` и заменяет файл только целиком полученным и проверенным ответом.
+
+## Тестирование
+
+Из папки `backend`:
+
+```bash
+python3 -m pytest -q tests
 python3 tests/test_mvp_end_to_end.py
 ```
 
-## MVP 1.0 validation
+`pytest` запускает 8 автотестов: неверный круг, весь пелотон, жёлтые флаги, статусы, позиция после стопа, отсутствие чтения будущих кругов, форма ответа `NO_DATA`.
 
-The final end-to-end test covered laps 10–71 of the Mexico City Grand Prix 2025.
+`test_mvp_end_to_end.py` — сквозной прогон всей цепочки по всем пилотам и кругам. При ошибке он завершается с ненулевым кодом.
 
-Results:
+## Проверка MVP 1.0
+
+Сквозной тест покрыл круги 2–71 Гран-при Мехико 2025 и всех 20 пилотов.
 
 ```text
-race_state_ok: 62
-events_ok: 62
-theo_ok: 62
+race_state_ok: 70
+events_ok: 70
+theo_ok: 70
 
-strategy_ok: 620
-team_engineer_ok: 620
-intervention_ok: 620
+strategy_ok: 1400
+team_engineer_ok: 1400
+intervention_ok: 1400
 
 errors: 0
-no_data: 0
+no_data: 214
+critical_messages: 81
+emitted_messages: 232
 ```
 
-The test included:
+Ошибки внутри модулей не перехватываются, поэтому `errors: 0` означает, что вся цепочка отработала без исключений.
 
-- 62 race-state reconstructions;
-- 620 strategy calculations;
-- 620 Team Engineer calculations;
-- 620 intervention calculations;
-- critical strategy signals;
-- high-priority strategy signals;
-- VSC handling;
-- end-of-race strategy calculations.
+`no_data: 214` — это пилоты, отстающие на круг. Их отрыв приходит строкой `+1 LAP`, и посчитать для них пит-стоп нельзя.
 
-Final result:
+## Ограничения MVP
 
-```text
-PASS - No runtime errors detected.
-```
+- Гонка одна, её параметры заданы в `data_store.py`; последний круг продублирован в `END_LAP` в `RaceDashboard.tsx`.
+- Живого потока данных пока нет — только повтор исторических данных.
+- В окне пит-стопа отрывы на ближайшие круги считаются неизменными, меняется только возраст шин.
+- Значения с пометкой «ориентировочно» в `data_store.py` — поправка на топливо, коэффициенты VSC и Safety Car, пороги возраста шин, `PIT_LANE_TIME_ON_TRACK` — стартовые. Их нужно подобрать по данным трассы.
+- Для пилотов, отстающих на круг, стратегия не считается.
 
-## MVP status
+## Статус
 
-**THEO MVP 1.0 — COMPLETE**
+**THEO MVP 1.0** подтверждает работу полной цепочки: данные гонки → анализ → стратегическое решение → интервенция.
 
-The current version demonstrates the complete analytical chain from race data to an autonomous strategy intervention.
-
-The MVP is intended as the foundation for further development rather than a finished Formula 1 strategy system.
-
-Future versions can extend the model with additional race intelligence, improved strategic modelling, live data integration and more advanced AI-generated commentary.
+MVP — основа для дальнейшего развития, а не готовая система стратегии Формулы 1.
